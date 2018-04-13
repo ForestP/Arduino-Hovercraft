@@ -1,0 +1,186 @@
+/*
+  Project: Project 3
+  Group: 11
+  Date: 2017-03-02
+
+  Authors: Forest Plasencia, Blake Herren, Jacob Burcham
+  
+  Responsible author: Blake Herren
+*/
+
+// Declare enum state for each sensor as a global variable
+
+#include "project.h"
+#include "OpticalFlowCamera.h"
+
+////////////////////////////////////////////////////
+// Global constants
+
+// Total number of cameras
+const int NUM_CAMERAS = 3;
+
+// Select pins for the 3 cameras
+const uint8_t CAMERA_SELECT[NUM_CAMERAS] = {33, 34, 35};
+
+// Common reset pin
+const uint8_t RESET_PIN = 36; 
+
+// Sensor Ports
+const int16_t leftSensor = 7;
+const int16_t rightSensor = 8;
+
+/////////////////////////////////////////////////////
+// Global variables
+
+// Camera interface object
+OpticalFlowCamera cameras(RESET_PIN);
+
+int camSlipX[NUM_CAMERAS];
+int camSlipY[NUM_CAMERAS];
+
+/* 
+Function Name: setup
+   
+Initialize serial port on Teensy
+
+Inputs:
+  none
+
+Outputs/Effects
+  Initialize inputs and outputs
+*/
+int ret;
+void setup() {
+  // Initialize serial port & send/recieve @ 115,200 bit/s
+  Serial.begin(115200);
+  
+  PORTE_PCR24 = PORT_PCR_MUX(0x1);
+  PORTE_PCR25 = PORT_PCR_MUX(0x1);
+  PORTC_PCR8 = PORT_PCR_MUX(0x1);
+  PORTC_PCR9 = PORT_PCR_MUX(0x1);
+  
+  GPIOE_PDDR = 0x3000000;
+  GPIOC_PDDR = 0x300;
+
+  
+   //Initialize each of the cameras
+  for (int i = 0; i < NUM_CAMERAS; i++) {
+    int ret = cameras.addCamera(CAMERA_SELECT[i]);
+    Serial.print(ret);
+  }
+
+}
+/* 
+Function Name: read_distance
+
+Calculate the calibraterd distance the sensor is from object 
+based on the value received from sensor
+
+Inputs:
+   DistanceSensor side: an enum condition referring to either the
+   left or the right sensor.
+
+Outputs/Effects
+   distance: float
+   Return the calibrated distance as a float in units of centimeters.
+*/
+
+float read_distance(DistanceSensor side) {
+  float distance = 0;
+  int sensorVal = 0;
+  float realDistance = 0; 
+  
+  if (side == DISTANCE_LEFT) {
+    sensorVal = analogRead(leftSensor); 
+    realDistance = (5636/(sensorVal - 74.643)); //calculate distance with best fit line
+  }  
+    else if (side == DISTANCE_RIGHT) {
+      sensorVal = analogRead(rightSensor);
+      realDistance = (5636/(sensorVal - 74.643)); //calculate distance with best fit line
+      } // close if left or right
+   
+  if (realDistance > 80 || realDistance < 0) { // calculated distance > 80cm or negative
+        distance = 80; // truncate distance to 80cm
+      }     
+      else if (realDistance < 80){
+        distance = realDistance; 
+      }
+
+  // Return calibrated distance in units of cm
+  return distance;
+  
+} // close function
+
+
+/* 
+Function Name: loop
+   
+loop through main program, getting the calibrated sensor distance
+and print each distance out
+
+Inputs:
+  none
+
+Outputs/Effects
+  Print out the calculated distance of each sensor
+*/
+int8_t dx, dy;
+uint8_t quality;
+int8_t count = 0;
+
+void loop() {
+
+
+  if (Serial.available()) {
+    char c = Serial.read();
+    if (c == 0x63) {
+      for (int i = 0; i < NUM_CAMERAS; i++) { 
+      Serial.printf("cleared");
+      camSlipX[i] = 0;
+      camSlipY[i] = 0;
+      }
+      count = 0;
+    }
+
+  } else {
+        
+    // Calls function to calculate left sensor distance
+    float leftDistance = read_distance(DISTANCE_LEFT);
+    // Calls function to calculate right sensor distance
+    float rightDistance = read_distance(DISTANCE_RIGHT);
+    // Prints out each sensor distance on the same line
+    //Serial.printf("Left: %f   Right: %f \n", leftDistance, rightDistance);
+    
+    for (int i = 0; i < NUM_CAMERAS; i++) {
+      int result = cameras.readSlip(CAMERA_SELECT[i], dx, dy, quality);
+      //Serial.printf("camera %d ", i + 1);
+      switch(result) {
+        case -1 :
+          //Serial.printf("Overflow\n");
+          break;
+        case -2 :
+          //Serial.printf("No slip\n");
+          break;
+        case 0 :
+          //Serial.printf("SLIP \n");
+          camSlipX[i] += dx;
+          camSlipY[i] += dy;
+          break;
+      }
+    } 
+  }
+
+  count ++;
+  if (count == 10) {
+    for (int i = 0; i < NUM_CAMERAS; i++) {
+      float dx_dy = float(camSlipX[i]) / float(camSlipY[i]);
+      Serial.printf("Camera %d \n", i + 1 );
+      Serial.printf("Slip X: %d  Slip Y: %d \n", camSlipX[i], camSlipY[i]);
+      Serial.printf("dx/dy : %f \n", dx_dy );
+      count = 0;
+    }
+  }
+
+
+  delay(100);
+} // close void loop
